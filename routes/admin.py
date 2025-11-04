@@ -3,7 +3,7 @@ import bcrypt
 #local
 import db
 import auth
-from schema import AddUserRequest, TokenPayload
+from schema import AddUserRequest, TokenPayload, userList, getUserListResponse, getChannelListResponse, getUserInfoAtChannel
 router = fastapi.APIRouter()
 
 @router.post("/admin/add_user")
@@ -55,7 +55,78 @@ async def add_user(
         content={"msg": f"user {user.username} created successfully"},
         status_code=200
     )
+@router.post("/admin/add_channel")
+@router.post("/admin/add_user_to_channel")
+@router.post("/admin/delete_user_from_channel")
+@router.post("admin/delete_channel")
 
+@router.get("/admin/get_user_list", response_model=getUserListResponse)
+async def get_user_list(
+    payload:TokenPayload=fastapi.Depends(auth.verify_token)
+):
+    if payload["role"] != "sys_admin":
+        raise fastapi.HTTPException(status_code=401)
+    async with db.getDictCursor() as cur:
+        try:
+            await cur.execute('SELECT id, email, username, user_role, status FROM "user_account"')
+            rows = await cur.fetchall()
+        except Exception as e:
+            print("Error in db:",e)
+            return fastapi.responses.JSONResponse(
+                content={"msg": f"DB error: {str(e)} {type(e)}"},
+                status_code=500
+            )
+        return {"users":rows}
+    
+
+@router.get("/admin/get_channel_list", response_model=getChannelListResponse)
+async def get_channel_list(
+        payload:TokenPayload=fastapi.Depends(auth.verify_token)
+):
+    if payload["role"] != "sys_admin":
+        raise fastapi.HTTPException(status_code=401)
+    async with db.getDictCursor() as cur:
+        try:
+            await cur.execute('SELECT id, name,status FROM "channel"')
+            rows = await cur.fetchall()
+        except Exception as e:
+            print("Error in db:",e)
+            return fastapi.responses.JSONResponse(
+                content={"msg": f"DB error: {str(e)} {type(e)}"},
+                status_code=500
+            )
+        return {"channel":rows}
+
+@router.get("/admin/get_userinfo_at_channel", response_model=getUserInfoAtChannel)
+async def get_channel_list(
+    payload: TokenPayload = fastapi.Depends(auth.verify_token)
+):
+    if payload["role"] != "sys_admin":
+        raise fastapi.HTTPException(status_code=401)
+
+    async with db.getDictCursor() as cur:
+        try:
+            await cur.execute("""
+                SELECT 
+                    c.id AS channel_id,
+                    c.name AS channel_name,
+                    u.id AS user_id,
+                    u.username AS user_name,
+                    cu.status,
+                    cu.permission
+                FROM channel_user cu
+                JOIN channel c ON cu.channel_id = c.id
+                JOIN user_account u ON cu.user_id = u.id
+            """)
+            rows = await cur.fetchall()
+        except Exception as e:
+            print("Error in db:", e)
+            return fastapi.responses.JSONResponse(
+                content={"msg": f"DB error: {str(e)} {type(e)}"},
+                status_code=500
+            )
+        
+        return {"UserInfo": rows}
 
 
 @router.get("/admin/init_admin")
@@ -90,7 +161,6 @@ async def init_admin():
                 (first_name, last_name)
             )
 
-            print("Bruh")
             user_info_id = (await cur.fetchone())["id"]
             print("user_info_id =", user_info_id, type(user_info_id))
             # Then insert into user_account with foreign key
