@@ -20,12 +20,30 @@ class UserStatus(str, enum.Enum):
     active="active"
     banned="banned"
     deleted="deleted"
-    completed="completed"
+
+class EditUserRequest(pydantic.BaseModel):
+    user_id: int
+    email: str
+    username: str
+    user_role: str
+    status: UserStatus
+    first_name: typing.Optional[str] = None
+    last_name: typing.Optional[str] = None
 
 class UserRole(str, enum.Enum):
     sys_admin="sys_admin"
     teacher="teacher"
     student="student"
+
+class ChannelStatus(str, enum.Enum):
+    active="active"
+    banned="banned"
+    deleted="deleted"
+
+class UserChannelStatus(str, enum.Enum):
+    active="active"
+    banned="banned"
+    deleted="deleted"
 
 class AddUserRequest(pydantic.BaseModel):
     email: pydantic.EmailStr
@@ -34,6 +52,20 @@ class AddUserRequest(pydantic.BaseModel):
     role: UserRole 
     first_name:  pydantic.constr(min_length=1,max_length=64)
     last_name:  pydantic.constr(min_length=1,max_length=64)
+
+class AddChannelRequest(pydantic.BaseModel):
+    name: str
+    status: ChannelStatus 
+
+class DeleteChannelRequest(pydantic.BaseModel):
+    channel_id: int
+    name: str
+
+class EditUserChannelRequest(pydantic.BaseModel):
+    channel_id: int
+    user_id: int 
+    status: UserChannelStatus
+    permission: int 
 
 class userList(pydantic.BaseModel):
     id: int
