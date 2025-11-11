@@ -27,8 +27,8 @@ class EditUserRequest(pydantic.BaseModel):
     username: str
     user_role: str
     status: UserStatus
-    first_name: typing.Optional[str] = None
-    last_name: typing.Optional[str] = None
+    first_name: typing.Optional[str]=None
+    last_name:  typing.Optional[str]=None
 
 class UserRole(str, enum.Enum):
     sys_admin="sys_admin"
@@ -69,10 +69,12 @@ class EditUserChannelRequest(pydantic.BaseModel):
 
 class userList(pydantic.BaseModel):
     id: int
-    name: str
+    username: str
     email: pydantic.EmailStr
     status: str
-    role:UserRole
+    user_role:UserRole
+    first_name: str
+    last_name: str
 
 class getUserListResponse(pydantic.BaseModel):
     users: typing.List[userList]
@@ -90,7 +92,7 @@ class ChannelUserInfo(pydantic.BaseModel):
     channel_id: int
     channel_name: str
     user_id: int
-    user_name: str
+    username: str
     status: str
     permission: int
 

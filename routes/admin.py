@@ -81,7 +81,6 @@ async def edit_user(
                     (info.first_name, info.last_name, user_info["user_info_id"])
                 )
 
-        await db.connection.commit()
         return fastapi.responses.JSONResponse(
             content={"msg": f"user {info.username} edited successfully"},
             status_code=200
@@ -89,27 +88,33 @@ async def edit_user(
 
 @router.post("/admin/add_channel")
 async def add_channel(
-    channel:AddChannelRequest,
-    payload:TokenPayload=fastapi.Depends(auth.verify_token)
+    channel: AddChannelRequest,
+    payload: TokenPayload = fastapi.Depends(auth.verify_token)
 ):
     if payload["role"] != "sys_admin":
         raise fastapi.HTTPException(status_code=401)
+
     async with db.getDictCursor() as cur:
-        await cur.execute("SELECT name FROM channel WHERE name = %s",(channel.name))
+        await cur.execute("SELECT name FROM channel WHERE name = %s", (channel.name,))
         row = await cur.fetchone()
         if row:
-            raise fastapi.HTTPException(status_code=403, detail="Channel Name already exsists")
+            raise fastapi.HTTPException(status_code=403, detail="Channel Name already exists")
+
     async with db.getDictCursor() as cur:
         try:
-            await cur.execute("INSERT INTO channel (name, status) VALUES (%s,%s)", (channel.name, channel.status) )
+            await cur.execute(
+                "INSERT INTO channel (name, status) VALUES (%s, %s)",
+                (channel.name, channel.status)
+            )
         except Exception as e:
             print("Error in db:", e)
-        return fastapi.responses.JSONResponse(
-            content={"msg":f"DB error:{str(e)} {type(e)}"},
-            status_code=500
-        )
+            return fastapi.responses.JSONResponse(
+                content={"msg": f"DB error: {str(e)}"},
+                status_code=500
+            )
+
     return fastapi.responses.JSONResponse(
-        content={"msg":f"Channel {channel.name} created successfully"},
+        content={"msg": f"Channel {channel.name} created successfully"},
         status_code=200
     )
 
@@ -125,9 +130,8 @@ async def delete_channel(
             'UPDATE "channel" SET status = %s WHERE id = %s',
             ("deleted", info.channel_id)
         )
-        await db.connection.commit()
         return fastapi.responses.JSONResponse(
-            content={"msg":f"Channel {channel.name} Deleted successfully"},
+            content={"msg":f"Channel {info.name} Deleted successfully"},
             status_code=200
         )
 
@@ -165,7 +169,6 @@ async def edit_user_channel(
                 (info.channel_id, info.user_id, info.permission, info.status)
             )
 
-        await db.connection.commit()
         return fastapi.responses.JSONResponse(
             content={"msg":f"Updated User Channel relation"},
             status_code=200
@@ -179,8 +182,20 @@ async def get_user_list(
         raise fastapi.HTTPException(status_code=401)
     async with db.getDictCursor() as cur:
         try:
-            await cur.execute('SELECT id, email, username, user_role, status FROM "user_account"')
+            await cur.execute("""
+                SELECT
+                    a.id AS id,
+                    a.username as username,
+                    a.email as email,
+                    a.status as status,
+                    a.user_role as user_role,
+                    i.first_name as first_name,
+                    i.last_name as last_name
+                FROM user_account a 
+                JOIN user_info i ON a.user_info_id = i.id
+            """)
             rows = await cur.fetchall()
+
         except Exception as e:
             print("Error in db:",e)
             return fastapi.responses.JSONResponse(
@@ -222,7 +237,7 @@ async def get_channel_list(
                     c.id AS channel_id,
                     c.name AS channel_name,
                     u.id AS user_id,
-                    u.username AS user_name,
+                    u.username AS username,
                     cu.status,
                     cu.permission
                 FROM channel_user cu
