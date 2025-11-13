@@ -1,6 +1,7 @@
 import typing
 import fastapi
 import asyncio
+import json
 
 
 class ConnectionManager:
@@ -17,11 +18,10 @@ class ConnectionManager:
         self.active_connections.pop(user_id, None)
         print(f"User {user_id} disconnected")
     
-    async def send_to_user(self, user_id:int , message:str):
+    async def send_to_user(self, user_id:int , message:json):
         ws=self.active_connections.get(user_id)
         if ws:
-            await ws.send_json(data={'message':'test data'})
-            await ws.send_text(message)
+            await ws.send_json(message)
 
     async def broadcast(self, user_id:int, message:str):
         for user_id_ws,ws in self.active_connections.items():

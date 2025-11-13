@@ -106,3 +106,48 @@ class UserInfoResponse(pydantic.BaseModel):
     role:  UserRole 
     first_name:  pydantic.constr(min_length=1,max_length=64)
     last_name:  pydantic.constr(min_length=1,max_length=64)
+
+#Chats route
+
+# ===== Requests =====
+class BaseRequest(pydantic.BaseModel):
+    request : str
+
+class GetUsersRequest(BaseRequest):
+    request : typing.Literal["get_users"]
+
+class GetChannelsRequest(BaseRequest):
+    request : typing.Literal["get_channels"]
+
+class LoadMessagesRequest(BaseRequest):
+    request : typing.Literal["load_messages"]
+    channel_id: int
+    limit: typing.Optional[int] = 50
+
+# ===== Responses =====
+class UserItem(pydantic.BaseModel):
+    id: int
+    username: str
+
+class ChannelItem(pydantic.BaseModel):
+    id: int
+    name: str
+    last_message: typing.Optional[str]
+
+class MessageItem(pydantic.BaseModel):
+    sender_id: int
+    content: str
+    created_at: str
+
+class UserListResponse(pydantic.BaseModel):
+    type: typing.Literal["user_list"]
+    data: typing.List[UserItem]
+
+class ChannelListResponse(pydantic.BaseModel):
+    type: typing.Literal["channel_list"]
+    data: typing.List[ChannelItem]
+
+class MessageListResponse(pydantic.BaseModel):
+    type: typing.Literal["messages"]
+    data: typing.List[MessageItem]
+

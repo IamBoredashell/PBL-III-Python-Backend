@@ -1,5 +1,4 @@
 import fastapi
-import psycopg
 import json
 #local
 import db
