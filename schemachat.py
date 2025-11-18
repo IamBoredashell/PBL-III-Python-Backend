@@ -11,23 +11,25 @@ class MessageItem(BaseModel):
     message: Optional[str] = None
     timestamp: Optional[str] = None
     status: Optional[str] = None
+    prev_id: Optional[int] = None
 
 class ChannelItem(BaseModel):
     channel_id: int
     channel_name: str
     last_message: Optional[MessageItem] = None
+    permission: Optional[int] = None
 
 class UserItem(BaseModel):
     user_id: int
     user_name: str
     permission: int
+    #weird fix for emergency
+    channel_id: int
 
 # ===== Requests =====
 class BaseRequest(BaseModel):
     request: str
 
-class GetUsersRequest(BaseRequest):
-    request: Literal["get_users"]
 
 class GetChannelsRequest(BaseRequest):
     request: Literal["get_channels"]
@@ -38,11 +40,20 @@ class LoadMessagesRequest(BaseRequest):
     request: Literal["load_messages"]
     channel_id: int
     limit: int = 1
+    prev_id: Optional[int] = None
 
 
 class LoadUsersRequest(BaseRequest):
     request: Literal["load_users"]
     channel_id: int
+
+class SendMessageRequest(BaseRequest):
+    request: Literal["send_message"]
+    channel_id: int
+    status: Literal["Normal","Edited","Deleted","Attachment"]
+    message: Optional[str]= None
+    prev_id: Optional[int] = None
+
 
 # ===== Responses =====
 
@@ -53,7 +64,7 @@ class GetChannelsResponse(BaseModel):
 
 
 class UserListResponse(BaseModel):
-    request: Literal["get_users"] = "get_users"
+    request: Literal["load_users"] = "load_users"
     users: List[UserItem]
 
 

@@ -49,11 +49,7 @@ async def chatSocket(websocket: fastapi.WebSocket, user_id: int, token: str):
                     continue
 
                 result = await handle_get_channels(user_id, data)
-
-                if hasattr(result, "model_dump"):
-                    await websocket.send_json(result.model_dump())
-                else:
-                    await websocket.send_json(result)
+                await websocket.send_json(result.model_dump())
                 continue
 
             # ====== LOAD MESSAGES ======
@@ -80,7 +76,6 @@ async def chatSocket(websocket: fastapi.WebSocket, user_id: int, token: str):
                     continue
                 result = await handle_get_users(user_id,data)
 
-                print(result)
                 if hasattr(result, "model_dump"):
                     await websocket.send_json(result.model_dump())
                 else:
@@ -338,24 +333,23 @@ async def handle_get_channels(user_id: int, data: GetChannelsRequest):
 
                 # ---- Fetch last message ----
                 last_msg = None
-                #
-                # if has_perm(perm, 2): 
-                #     res = await handle_load_messages(
-                #         user_id,
-                #         LoadMessagesRequest(
-                #             request="load_messages",
-                #             channel_id=channel_id,
-                #             limit=1
-                #         )
-                #     )
-                #     if res.get("messages"):
-                #         last_msg = res["messages"][0]
+
+                if has_perm(perm, 2): 
+                    res = await handle_load_messages(
+                        user_id,
+                        LoadMessagesRequest(
+                            request="load_messages",
+                            channel_id=channel_id,
+                            limit=1
+                        )
+                    )
+                    if res.get("messages"):
+                        last_msg = res["messages"][0]
 
                 channels.append({
                     "channel_id": channel_id,
                     "channel_name": channel_name,
-                    "last_message": last_msg,
-                    "permission":perm
+                    "last_message": last_msg
                 })
 
             return GetChannelsResponse(channels=channels)
@@ -403,9 +397,7 @@ async def handle_get_users(user_id: int, data: LoadUsersRequest):
                 UserItem(
                     user_id=r["user_id"],
                     user_name=r["user_name"],
-                    permission=r["permission"],
-                    # Temp fix for frontend returning channel_id
-                    channel_id=channel_id
+                    permission=r["permission"]
                 )
                 for r in rows
             ]
@@ -425,7 +417,7 @@ async def handle_get_users(user_id: int, data: LoadUsersRequest):
 
 async def handle_messages(user_id: int, data: SendMessageRequest):
     channel_id = data.channel_id
-    status = data.status
+    status = data.status      # "Normal", "Edited", "Deleted", "Attachment"
     message = data.message
     prev_id = data.prev_id if hasattr(data, "prev_id") else None
 
@@ -439,188 +431,155 @@ async def handle_messages(user_id: int, data: SendMessageRequest):
                 WHERE user_id = %s AND channel_id = %s
             """, (user_id, channel_id))
             row = await cur.fetchone()
+
             if not row:
                 return {"type": "send_message", "error": "not_in_channel"}
+
             perm = row["permission"]
-            if not has_perm(perm,3):
-                return{"type":"send_message","Error":f"Missing Permission_(3)"}
-            if status == "Normal":
-                return await handle_message_normal(user_id,data)
-            if status == "Deleted":
-                #utk change: (prev_id) -> (prev_id,) to make it a tuple
-                #utk change: SELECT -> SELECT *
-                #utk change: indented prev inside for scope issues with cur
-                prev = None
-                async with db.getDictCursor() as cur:
-                    print("Previous Id Recieved:", prev_id)
-                    await cur.execute("""
-                    SELECT * 
-                    FROM message
-                    WHERE id = %s                         
-                    """,(prev_id,))
-                    prev = await cur.fetchone()
-                    print("Prev: ",prev)
-                if not prev:
-                    return {"type":"send_message","error":"WHERE is THE MESSAGE TO BE DELETED"}
-                if user_id == prev["sender"]:#utk change, changed "sender_id" -> "sender"
-                    if not has_perm(perm,4):
-                        return {"type": "send_message", "error": "not enough permission"}
-                else:
-                    if not has_perm(perm,9):
-                        return {"type": "send_message", "error": "not enough permission" }
-                return await handle_message_deleted(user_id,data)
-            if status == "Edited":
-                return await handle_message_edited(user_id,data)
-            else:
-                return {"type": "send_message", "error": "No such status exsist" }
 
-    except Exception as e:
-        print("Error in handle_message: ",e)
-        return {"type": "send_message", "error": "handle_message failed", "detail": str(e)}
+            required = [3, 4, 5, 6, 9]   # same bits you defined
 
-async def handle_message_normal(user_id:int,data):
-    try:
-        async with db.getDictCursor() as cur:
+            for bit in required:
+                if not has_perm(perm, bit):
+                    return {"type": "send_message", "error": f"missing_perm_{bit}"}
+
+            # 2. Insert new message entry
             await cur.execute("""
                 INSERT INTO message (channel_id, sender, message, status)
                 VALUES (%s, %s, %s, %s)
                 RETURNING id, timestamp
-            """, (data.channel_id, user_id, data.message, data.status))
-            saved = await cur.fetchone()
-            msg_id = saved["id"]
-    except Exception as e:
-        print("DB Error in function handle_message_normal: ",e)
-        return {"type": "send_message", "error": "normal_failed", "detail": str(e)}
+            """, (channel_id, user_id, message, status))
 
+            saved = await cur.fetchone()
+
+            msg_id = saved["id"]
+            timestamp = saved["timestamp"]
+
+    except Exception as e:
+        return {
+            "type": "send_message",
+            "error": "internal_error",
+            "detail": str(e)
+        }
+
+    # 3. Dispatch
+    if status == "Normal":
+        return await handle_message_normal(user_id, channel_id, msg_id)
+
+    if status == "Edited":
+        return await handle_message_edited(user_id, channel_id, msg_id, prev_id)
+
+    if status == "Deleted":
+        return await handle_message_deleted(user_id, channel_id, msg_id, prev_id)
+
+    if status == "Attachment":
+        return await handle_message_attachment(user_id, channel_id, msg_id)
+
+    print("Error on line 341")
+    return {"type": "send_message", "error": "unknown_status"}
+
+
+
+
+async def handle_message_normal(user_id: int, channel_id: int, msg_id: int):
     try:
         async with db.getDictCursor() as cur:
-            await cur.execute("SELECT * FROM message WHERE id = %s ",(msg_id,))
-            msg=await cur.fetchone()
-            print("msg:",msg)
-            await cur.execute("SELECT * FROM user_account WHERE id = %s ",(msg["sender"],))
-            row=await cur.fetchone()
-            res = MessageItem(
-                channel_id=msg["channel_id"],
-                message_id=msg_id,
-                sender_id=msg["sender"],
-                sender_name=row["username"],
-                message=msg["message"],
-                timestamp=str(msg["timestamp"]),
-                status=msg["status"]
-            )
-        async with db.getDictCursor() as cur:
             await cur.execute("""
-                SELECT user_id 
+                SELECT id
                 FROM channel_user
-                WHERE channel_id = %s 
-            """,(msg["channel_id"],))
-            rows=await cur.fetchall()
+                WHERE channel_id = %s
+            """, (channel_id,))
+            rows = await cur.fetchall()
+
         for row in rows:
-            uid=row["user_id"]
-            if user_id == uid:
-                print(id)
-                continue
-            await wsm.send_to_user(uid,res.model_dump())
-        print("Normal Message success ")
+            uid = row["id"]
+            await webSockets.send_to_user(uid, {
+                "type": "new_message",
+                "channel_id": channel_id,
+                "message_id": msg_id
+            })
+
         return {"type": "send_message", "status": "success", "id": msg_id}
+
     except Exception as e:
-        print("Transmission error in send_to_user: ",e)
+        print(e)
         return {"type": "send_message", "error": "normal_failed", "detail": str(e)}
 
-async def handle_message_deleted(user_id:int,data):
-    print("HANDLE MESSAGE DELETED CALLED!")
-    try:
-        async with db.getDictCursor() as cur:
-            await cur.execute(
-                "UPDATE message SET status = %s WHERE id = %s",
-                ("Deleted", data.prev_id)
-            )
-    except Exception as e:
-        print("DB Error in function handle_message_deleted: ",e)
-        return {"type": "send_message", "error": "normal_failed", "detail": str(e)}
-    try:
-        async with db.getDictCursor() as cur:
-            await cur.execute("SELECT * FROM message WHERE id = %s ",(data.prev_id,))
-            msg=await cur.fetchone()
-            await cur.execute("SELECT * FROM user_account WHERE id = %s ",(msg["sender"],))
-            row=await cur.fetchone()
-            res = MessageItem(
-                channel_id=msg["channel_id"],
-                message_id=data.prev_id,
-                sender_id=msg["sender"],
-                sender_name=row["username"],
-                message=msg["message"],
-                timestamp=str(msg["timestamp"]),
-                status=msg["status"]
-            )
-        async with db.getDictCursor() as cur:
-            await cur.execute("""
-                SELECT user_id 
-                FROM channel_user
-                WHERE channel_id = %s 
-            """,(msg["channel_id"],))
-            rows=await cur.fetchall()
-        for row in rows:
-            uid=row["user_id"]
-            if user_id == uid:
-                continue
-            await wsm.send_to_user(uid,res.model_dump())
-        print("Deleted Message success ")
-        return {"type": "delete_message", "status": "success", "id": data.prev_id}
-    except Exception as e:
-        print("Transmission error in send_to_user: ",e)
-        return {"type": "dalete_message", "error": "normal_failed", "detail": str(e)}
 
-async def handle_message_edited (user_id:int,data):
+async def handle_message_edited(user_id: int, channel_id: int, msg_id: int, prev_id: int):
     try:
         async with db.getDictCursor() as cur:
-            await cur.execute(
-                "UPDATE message SET status = %s WHERE id = %s",
-                ("Edited", data.prev_id)
-            )
-            
             await cur.execute("""
-                INSERT INTO message (channel_id, sender, message, status, prev_message_id)
-                VALUES (%s, %s, %s, %s, %s)
-                RETURNING id, timestamp
-            """, (data.channel_id, user_id, data.message, "Edit",data.prev_id))
-            saved = await cur.fetchone()
-            msg_id = saved["id"]
-    except Exception as e:
-        print("DB Error in function handle_message_edited: ",e)
-        return {"type": "send_message", "error": "edit_failed", "detail": str(e)}
-    try:
-        async with db.getDictCursor() as cur:
-            await cur.execute("SELECT * FROM message WHERE id = %s ",(msg_id,))
-            msg=await cur.fetchone()
-            await cur.execute("SELECT * FROM user_account WHERE id = %s ",(msg["sender"],))
-            row=await cur.fetchone()
-            res = MessageItem(
-                channel_id=msg["channel_id"],
-                message_id=msg_id,
-                sender_id=msg["sender"],
-                sender_name=row["username"],
-                message=msg["message"],
-                prev_id=msg["prev_message_id"],
-                timestamp=str(msg["timestamp"]),
-                status=msg["status"]
-            )
-        async with db.getDictCursor() as cur:
+                UPDATE message
+                SET status = 'Edited'
+                WHERE id = %s AND channel_id = %s
+            """, (prev_id, channel_id))
+
             await cur.execute("""
-                SELECT user_id 
+                UPDATE message
+                SET status = 'Edit'
+                WHERE id = %s AND channel_id = %s
+            """, (msg_id, channel_id))
+
+            await cur.execute("""
+                SELECT id
                 FROM channel_user
-                WHERE channel_id = %s 
-            """,(msg["channel_id"],))
-            rows=await cur.fetchall()
+                WHERE channel_id = %s
+            """, (channel_id,))
+            rows = await cur.fetchall()
+
         for row in rows:
-            uid=row["user_id"]
-            if user_id == uid:
-                continue
-            await wsm.send_to_user(uid,res.model_dump())
-        print("edited Message success ")
-        return {"type": "edited_message", "status": "success", "id": msg_id}
+            uid = row["id"]
+            await webSockets.send_to_user(uid, {
+                "type": "edit_message",
+                "channel_id": channel_id,
+                "prev_id": prev_id,
+                "new_id": msg_id
+            })
+
+        return {"type": "send_message", "status": "edited", "id": msg_id}
+
     except Exception as e:
-        print("Transmission error in send_to_user: ",e)
+        print(e)
         return {"type": "send_message", "error": "edit_failed", "detail": str(e)}
+
+
+
+async def handle_message_deleted(user_id: int, channel_id: int, msg_id: int, prev_id: int):
+    try:
+        async with db.getDictCursor() as cur:
+            await cur.execute("""
+                UPDATE message
+                SET status = 'Deleted'
+                WHERE id = %s AND channel_id = %s
+            """, (prev_id, channel_id))
+
+            await cur.execute("""
+                UPDATE message
+                SET status = 'Delete'
+                WHERE id = %s AND channel_id = %s
+            """, (msg_id, channel_id))
+
+            await cur.execute("""
+                SELECT id
+                FROM channel_user
+                WHERE channel_id = %s
+            """, (channel_id,))
+            rows = await cur.fetchall()
+
+        for row in rows:
+            uid = row["id"]
+            await webSockets.send_to_user(uid, {
+                "type": "delete_message",
+                "channel_id": channel_id,
+                "prev_id": prev_id,
+                "new_id": msg_id
+            })
+
+        return {"type": "send_message", "status": "deleted", "id": msg_id}
+
+    except Exception as e:
+        print(e)
+        return {"type": "send_message", "error": "delete_failed", "detail": str(e)}
 
 
